@@ -35,14 +35,15 @@ async function main() {
           // Save products to database
           await upsertProductAvailability(dispensary.id, products);
 
-          // Update dispensary status
-          await updateDispensaryStatus(dispensary.id, 'success', null);
+          // Update dispensary status with product count
+          await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
 
           results.success++;
           results.products += products.length;
           console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
         } else {
-          await updateDispensaryStatus(dispensary.id, 'partial', 'No products found');
+          // Update status with 0 product count
+          await updateDispensaryStatus(dispensary.id, 'partial', 'No products found', 0);
           results.success++;
           console.log(`⚠️ ${dispensary.name}: No products found`);
         }
