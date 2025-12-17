@@ -7,6 +7,11 @@ on:
 
   # Allow manual trigger
   workflow_dispatch:
+    inputs:
+      dispensary_id:
+        description: 'Dispensary ID to scrape (leave empty for all)'
+        required: false
+        type: string
 
 jobs:
   scrape:
@@ -38,4 +43,12 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: npm run scrape
+          DISPENSARY_ID: ${{ inputs.dispensary_id }}
+        run: |
+          if [ -n "$DISPENSARY_ID" ]; then
+            echo "Scraping single dispensary: $DISPENSARY_ID"
+            node scrape-one.js "$DISPENSARY_ID"
+          else
+            echo "Scraping all dispensaries"
+            npm run scrape
+          fi
