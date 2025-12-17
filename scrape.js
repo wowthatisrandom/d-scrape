@@ -1,13 +1,14 @@
 // Standalone scrape script for GitHub Actions
-const { scrapeDispensary } = require('./lib/dutchie');
+const { scrapeDispensary, getSupportedPlatforms } = require('./lib/scrapers');
 const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
 
 async function main() {
   console.log('🚀 Starting dispensary scrape...');
+  console.log(`📦 Supported platforms: ${getSupportedPlatforms().join(', ')}`);
   const startTime = Date.now();
 
   try {
-    // Get dispensaries to scrape
+    // Get all enabled dispensaries (all platforms)
     const dispensaries = await getEnabledDispensaries();
 
     if (!dispensaries || dispensaries.length === 0) {
@@ -15,7 +16,13 @@ async function main() {
       process.exit(0);
     }
 
+    // Group by platform for logging
+    const platformCounts = dispensaries.reduce((acc, d) => {
+      acc[d.menu_platform] = (acc[d.menu_platform] || 0) + 1;
+      return acc;
+    }, {});
     console.log(`📋 Found ${dispensaries.length} dispensaries to scrape`);
+    console.log(`   Platforms: ${Object.entries(platformCounts).map(([p, c]) => `${p}(${c})`).join(', ')}`);
 
     const results = {
       success: 0,
@@ -26,10 +33,15 @@ async function main() {
 
     // Scrape each dispensary
     for (const dispensary of dispensaries) {
-      console.log(`\n🏪 Scraping: ${dispensary.name}`);
+      console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
 
       try {
-        const products = await scrapeDispensary(dispensary);
+        // Configure scraper options - apply Ace Solventless filter for all platforms
+        const scraperOptions = {
+          brandFilter: 'ace'
+        };
+
+        const products = await scrapeDispensary(dispensary, scraperOptions);
 
         if (products && products.length > 0) {
           // Save products to database
@@ -42,10 +54,10 @@ async function main() {
           results.products += products.length;
           console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
         } else {
-          // Update status with 0 product count
-          await updateDispensaryStatus(dispensary.id, 'partial', 'No products found', 0);
+          // Scrape succeeded, just no Ace products at this store
+          await updateDispensaryStatus(dispensary.id, 'success', null, 0);
           results.success++;
-          console.log(`⚠️ ${dispensary.name}: No products found`);
+          console.log(`✅ ${dispensary.name}: No Ace products found`);
         }
       } catch (error) {
         console.error(`❌ ${dispensary.name}: ${error.message}`);
