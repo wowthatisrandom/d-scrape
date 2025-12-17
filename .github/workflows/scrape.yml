@@ -1,9 +1,9 @@
 name: Scrape Dispensary Menus
 
 on:
-  # Run every 6 hours
+  # Run every hour
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 * * * *'
 
   # Allow manual trigger
   workflow_dispatch:
