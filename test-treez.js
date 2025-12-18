@@ -6,7 +6,8 @@ puppeteer.use(StealthPlugin());
   const browser = await puppeteer.launch({ headless: 'new' });
   const page = await browser.newPage();
 
-  await page.goto('https://www.currentcanna.com/shop', { waitUntil: 'networkidle2', timeout: 60000 });
+  // Use the filtered URL
+  await page.goto('https://www.currentcanna.com/shop?brand.keyword=ACE+SOLVENTLESS', { waitUntil: 'networkidle2', timeout: 60000 });
   await new Promise(r => setTimeout(r, 3000));
 
   // Bypass age gate
@@ -20,36 +21,52 @@ puppeteer.use(StealthPlugin());
 
   await new Promise(r => setTimeout(r, 5000));
 
-  // Detailed element analysis
-  const details = await page.evaluate(() => {
-    const card = document.querySelector('a[href*="/product/"]');
-    if (!card) return null;
+  // Get all products
+  const products = await page.evaluate(() => {
+    const cards = document.querySelectorAll('a[href*="/product/"]');
+    const results = [];
 
-    const nameEl = card.querySelector('[class*="product__name"]');
-    const priceEl = card.querySelector('[class*="price__"]');
-    const infoEls = card.querySelectorAll('[class*="product_info__"]');
+    cards.forEach(card => {
+      const nameEl = card.querySelector('[class*="product__name"]');
+      const priceEl = card.querySelector('[class*="price__"]');
+      const infoEls = card.querySelectorAll('[class*="product_info__"]');
 
-    const infos = [];
-    infoEls.forEach(el => {
-      infos.push({ class: el.className, text: el.innerText });
+      // Parse infos
+      let brand = null, category = null, thc = null;
+      infoEls.forEach(el => {
+        const text = el.innerText.trim();
+        if (text.includes('%') || text.includes('MG')) {
+          if (text.includes('%')) thc = text;
+        } else if (text === text.toUpperCase() && text.length > 2) {
+          // All caps = brand or category
+          if (!brand) brand = text;
+          else if (!category) category = text;
+        }
+      });
+
+      const name = nameEl?.innerText?.trim();
+      const priceText = priceEl?.innerText || '';
+      const priceMatch = priceText.match(/\$([\d.]+)/);
+      const price = priceMatch ? parseFloat(priceMatch[1]) : null;
+
+      results.push({
+        name,
+        brand,
+        price,
+        category,
+        thc,
+        url: card.href
+      });
     });
 
-    return {
-      name: nameEl?.innerText,
-      nameClass: nameEl?.className,
-      price: priceEl?.innerText,
-      priceClass: priceEl?.className,
-      infos: infos.slice(0, 10),
-      fullText: card.innerText
-    };
+    return results;
   });
 
-  console.log('Name:', details.name);
-  console.log('Name class:', details.nameClass);
-  console.log('Price:', details.price);
-  console.log('\nInfo elements:');
-  details.infos.forEach(i => console.log(' -', i.text, '|', i.class.substring(0, 60)));
-  console.log('\nFull text:', details.fullText);
+  console.log('Found', products.length, 'ACE products:\n');
+  products.forEach(p => {
+    console.log('-', p.name);
+    console.log('  Brand:', p.brand, '| Price:', p.price, '| Category:', p.category);
+  });
 
   await browser.close();
 })().catch(e => console.error('Error:', e.message));
