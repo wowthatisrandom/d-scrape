@@ -3,7 +3,7 @@ const { scrapeDispensary, getSupportedPlatforms } = require('./lib/scrapers');
 const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
 
 // Max concurrent scrapers (different domains can run in parallel)
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = 5;
 
 /**
  * Extract base domain from URL
