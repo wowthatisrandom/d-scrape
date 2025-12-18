@@ -42,15 +42,15 @@ async function scrapeOne(dispensary, results) {
     const scraperOptions = { brandFilter: 'ace' };
     const products = await scrapeDispensary(dispensary, scraperOptions);
 
+    // Always upsert (deletes old products first, then inserts new ones)
+    await upsertProductAvailability(dispensary.id, products || []);
+    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+    results.success++;
+
     if (products && products.length > 0) {
-      await upsertProductAvailability(dispensary.id, products);
-      await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
-      results.success++;
       results.products += products.length;
       console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
     } else {
-      await updateDispensaryStatus(dispensary.id, 'success', null, 0);
-      results.success++;
       console.log(`✅ ${dispensary.name}: No Ace products found`);
     }
   } catch (error) {

@@ -36,15 +36,14 @@ async function main() {
       products.forEach((p, i) => {
         console.log(`   ${i + 1}. ${p.name}`);
       });
-
-      // Save to database
-      await upsertProductAvailability(dispensary.id, products);
-      await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
-      console.log(`\n💾 Saved to database`);
     } else {
       console.log(`\n✅ Scrape succeeded - no Ace products found`);
-      await updateDispensaryStatus(dispensary.id, 'success', null, 0);
     }
+
+    // Always save to database (upsert deletes old products first)
+    await upsertProductAvailability(dispensary.id, products || []);
+    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+    console.log(`\n💾 Saved to database`);
 
     process.exit(0);
 
