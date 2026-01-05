@@ -1,1 +1,12 @@
 node_modules/
+
+# Environment files - NEVER commit secrets
+.env
+.env.local
+.env*.local
+
+# Test files
+test-*.js
+check-*.js
+get-*.js
+find-*.js
