@@ -66,9 +66,10 @@ jobs:
           # Specific dispensary IDs mode (manual only)
           if [ -n "$DISPENSARY_IDS" ]; then
             echo "Scraping specific dispensaries: $DISPENSARY_IDS"
-            IFS=',' read -ra IDS <<< "$DISPENSARY_IDS"
+            # Remove ALL whitespace (spaces, newlines, tabs) from the input
+            CLEAN_IDS=$(echo "$DISPENSARY_IDS" | tr -d '[:space:]')
+            IFS=',' read -ra IDS <<< "$CLEAN_IDS"
             for id in "${IDS[@]}"; do
-              id=$(echo "$id" | xargs)  # trim whitespace
               echo "--- Scraping: $id ---"
               node scrape-one.js "$id" || true
             done
