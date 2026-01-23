@@ -4,7 +4,10 @@
   "description": "Scrapes Dutchie dispensary menus for product availability",
   "main": "scrape.js",
   "scripts": {
-    "scrape": "node scrape.js",
+    "scrape": "node scrape.js full",
+    "scrape:fast": "node scrape.js fast",
+    "scrape:zeros": "node scrape.js zeros",
+    "scrape:full": "node scrape.js full",
     "start": "node server.js"
   },
   "dependencies": {

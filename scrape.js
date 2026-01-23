@@ -2,6 +2,16 @@
 const { scrapeDispensary, scrapeDispensaryWithDiscovery, getSupportedPlatforms } = require('./lib/scrapers');
 const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
 
+// Parse CLI argument for scrape mode
+const mode = process.argv[2] || 'full';
+if (!['fast', 'zeros', 'full'].includes(mode)) {
+  console.error('Usage: node scrape.js [fast|zeros|full]');
+  console.error('  fast  - Only dispensaries WITH Ace products (hourly)');
+  console.error('  zeros - Only dispensaries WITHOUT Ace products (every 4h)');
+  console.error('  full  - All enabled dispensaries (manual/troubleshooting)');
+  process.exit(1);
+}
+
 // Max concurrent scrapers (different domains can run in parallel)
 const MAX_CONCURRENT = 5;
 
@@ -105,13 +115,13 @@ async function processDomainQueue(domain, dispensaries, results, retryQueue) {
 }
 
 async function main() {
-  console.log('🚀 Starting dispensary scrape...');
+  console.log(`🚀 Starting ${mode.toUpperCase()} scrape...`);
   console.log(`📦 Supported platforms: ${getSupportedPlatforms().join(', ')}`);
   console.log(`⚡ Max concurrent domains: ${MAX_CONCURRENT}`);
   const startTime = Date.now();
 
   try {
-    const dispensaries = await getEnabledDispensaries();
+    const dispensaries = await getEnabledDispensaries(null, mode);
 
     if (!dispensaries || dispensaries.length === 0) {
       console.log('ℹ️ No dispensaries to scrape');
@@ -140,7 +150,8 @@ async function main() {
     };
 
     // Queue for dispensaries that need retry (saved config returned 0 products)
-    const retryQueue = [];
+    // Skip retry queue in zeros mode - these are already the dispensaries without products
+    const retryQueue = mode === 'zeros' ? null : [];
 
     // Process domains in parallel, but dispensaries within same domain sequentially
     // This avoids hitting the same site simultaneously while maximizing throughput
@@ -174,7 +185,8 @@ async function main() {
     }
 
     // Retry pass: re-scrape dispensaries that returned 0 with saved config
-    if (retryQueue.length > 0) {
+    // Skip in zeros mode - retrying would be redundant
+    if (retryQueue && retryQueue.length > 0) {
       console.log(`\n${'='.repeat(50)}`);
       console.log(`🔄 Retry pass: ${retryQueue.length} dispensaries to check with format discovery`);
 

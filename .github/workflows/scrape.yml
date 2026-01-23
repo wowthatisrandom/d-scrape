@@ -1,15 +1,26 @@
 name: Scrape Dispensary Menus
 
 on:
-  # Run every hour
   schedule:
+    # Fast scrape every hour at :00 (dispensaries WITH products)
     - cron: '0 * * * *'
+    # Zeros scrape every 4 hours at :30 (dispensaries WITHOUT products - catch restocks)
+    - cron: '30 */4 * * *'
 
   # Allow manual trigger
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Scrape mode'
+        required: false
+        default: 'fast'
+        type: choice
+        options:
+          - fast
+          - zeros
+          - full
       dispensary_id:
-        description: 'Dispensary ID to scrape (leave empty for all)'
+        description: 'Dispensary ID to scrape (leave empty for all in mode)'
         required: false
         type: string
 
@@ -45,10 +56,24 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DISPENSARY_ID: ${{ inputs.dispensary_id }}
         run: |
+          # Single dispensary mode (manual only)
           if [ -n "$DISPENSARY_ID" ]; then
             echo "Scraping single dispensary: $DISPENSARY_ID"
             node scrape-one.js "$DISPENSARY_ID"
-          else
-            echo "Scraping all dispensaries"
-            npm run scrape
+            exit 0
           fi
+
+          # Determine mode based on trigger
+          if [ -n "${{ inputs.mode }}" ]; then
+            # Manual trigger - use selected mode
+            MODE="${{ inputs.mode }}"
+          elif [ "${{ github.event.schedule }}" = "30 */4 * * *" ]; then
+            # Zeros schedule (every 4h at :30)
+            MODE="zeros"
+          else
+            # Hourly schedule (:00) - fast mode
+            MODE="fast"
+          fi
+
+          echo "Running $MODE scrape"
+          npm run scrape:$MODE
