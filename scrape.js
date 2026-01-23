@@ -1,5 +1,5 @@
 // Standalone scrape script for GitHub Actions
-const { scrapeDispensary, getSupportedPlatforms } = require('./lib/scrapers');
+const { scrapeDispensary, scrapeDispensaryWithDiscovery, getSupportedPlatforms } = require('./lib/scrapers');
 const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
 
 // Max concurrent scrapers (different domains can run in parallel)
@@ -35,12 +35,12 @@ function groupByDomain(dispensaries) {
 /**
  * Scrape a single dispensary and handle results
  */
-async function scrapeOne(dispensary, results) {
+async function scrapeOne(dispensary, results, retryQueue) {
   console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
 
   try {
     const scraperOptions = { brandFilter: 'ace' };
-    const products = await scrapeDispensary(dispensary, scraperOptions);
+    const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     // Always upsert (deletes old products first, then inserts new ones)
     await upsertProductAvailability(dispensary.id, products || []);
@@ -52,6 +52,10 @@ async function scrapeOne(dispensary, results) {
       console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
     } else {
       console.log(`✅ ${dispensary.name}: No Ace products found`);
+      // Queue for retry if saved config returned 0 products
+      if (needsRetry && retryQueue) {
+        retryQueue.push(dispensary);
+      }
     }
   } catch (error) {
     console.error(`❌ ${dispensary.name}: ${error.message}`);
@@ -65,12 +69,37 @@ async function scrapeOne(dispensary, results) {
 }
 
 /**
+ * Retry a dispensary with full format discovery
+ */
+async function retryWithDiscovery(dispensary, results) {
+  console.log(`\n🔄 Retrying: ${dispensary.name} (${dispensary.menu_platform})`);
+
+  try {
+    const scraperOptions = { brandFilter: 'ace' };
+    const products = await scrapeDispensaryWithDiscovery(dispensary, scraperOptions);
+
+    // Update if we found products
+    if (products && products.length > 0) {
+      await upsertProductAvailability(dispensary.id, products);
+      await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
+      results.products += products.length;
+      results.retryFound += products.length;
+      console.log(`✅ ${dispensary.name}: Found ${products.length} products on retry!`);
+    } else {
+      console.log(`✅ ${dispensary.name}: Confirmed no Ace products`);
+    }
+  } catch (error) {
+    console.error(`❌ ${dispensary.name} retry failed: ${error.message}`);
+  }
+}
+
+/**
  * Process a domain queue sequentially (one dispensary at a time per domain)
  */
-async function processDomainQueue(domain, dispensaries, results) {
+async function processDomainQueue(domain, dispensaries, results, retryQueue) {
   console.log(`\n📍 Starting domain: ${domain} (${dispensaries.length} dispensaries)`);
   for (const dispensary of dispensaries) {
-    await scrapeOne(dispensary, results);
+    await scrapeOne(dispensary, results, retryQueue);
   }
   console.log(`✅ Finished domain: ${domain}`);
 }
@@ -106,8 +135,12 @@ async function main() {
       success: 0,
       failed: 0,
       products: 0,
-      errors: []
+      errors: [],
+      retryFound: 0
     };
+
+    // Queue for dispensaries that need retry (saved config returned 0 products)
+    const retryQueue = [];
 
     // Process domains in parallel, but dispensaries within same domain sequentially
     // This avoids hitting the same site simultaneously while maximizing throughput
@@ -124,7 +157,7 @@ async function main() {
       // Start new domain queues up to MAX_CONCURRENT
       while (activePromises.length < MAX_CONCURRENT && queueIndex < domainQueues.length) {
         const { domain, dispensaries: domainDispensaries } = domainQueues[queueIndex];
-        const promise = processDomainQueue(domain, domainDispensaries, results)
+        const promise = processDomainQueue(domain, domainDispensaries, results, retryQueue)
           .then(() => {
             // Remove from active promises when done
             const idx = activePromises.indexOf(promise);
@@ -140,6 +173,16 @@ async function main() {
       }
     }
 
+    // Retry pass: re-scrape dispensaries that returned 0 with saved config
+    if (retryQueue.length > 0) {
+      console.log(`\n${'='.repeat(50)}`);
+      console.log(`🔄 Retry pass: ${retryQueue.length} dispensaries to check with format discovery`);
+
+      for (const dispensary of retryQueue) {
+        await retryWithDiscovery(dispensary, results);
+      }
+    }
+
     const duration = Date.now() - startTime;
 
     console.log(`\n${'='.repeat(50)}`);
@@ -147,6 +190,9 @@ async function main() {
     console.log(`   Success: ${results.success}`);
     console.log(`   Failed: ${results.failed}`);
     console.log(`   Total Products: ${results.products}`);
+    if (results.retryFound > 0) {
+      console.log(`   Found on retry: ${results.retryFound}`);
+    }
 
     if (results.errors.length > 0) {
       console.log(`\n❌ Errors:`);

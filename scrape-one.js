@@ -29,7 +29,7 @@ async function main() {
       brandFilter: 'ace'
     };
 
-    const products = await scrapeDispensary(dispensary, scraperOptions);
+    const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     if (products && products.length > 0) {
       console.log(`\n✅ Found ${products.length} products:`);
@@ -38,6 +38,9 @@ async function main() {
       });
     } else {
       console.log(`\n✅ Scrape succeeded - no Ace products found`);
+      if (needsRetry) {
+        console.log(`   (Used saved config - run with --discover to try all formats)`);
+      }
     }
 
     // Always save to database (upsert deletes old products first)
