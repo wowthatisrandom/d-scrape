@@ -25,8 +25,8 @@ on:
         required: false
         default: false
         type: boolean
-      dispensary_id:
-        description: 'Dispensary ID to scrape (leave empty for all in mode)'
+      dispensary_ids:
+        description: 'Dispensary IDs to scrape (comma-separated, or leave empty for all in mode)'
         required: false
         type: string
 
@@ -60,13 +60,18 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          DISPENSARY_ID: ${{ inputs.dispensary_id }}
+          DISPENSARY_IDS: ${{ inputs.dispensary_ids }}
           REDISCOVER: ${{ inputs.rediscover }}
         run: |
-          # Single dispensary mode (manual only)
-          if [ -n "$DISPENSARY_ID" ]; then
-            echo "Scraping single dispensary: $DISPENSARY_ID"
-            node scrape-one.js "$DISPENSARY_ID"
+          # Specific dispensary IDs mode (manual only)
+          if [ -n "$DISPENSARY_IDS" ]; then
+            echo "Scraping specific dispensaries: $DISPENSARY_IDS"
+            IFS=',' read -ra IDS <<< "$DISPENSARY_IDS"
+            for id in "${IDS[@]}"; do
+              id=$(echo "$id" | xargs)  # trim whitespace
+              echo "--- Scraping: $id ---"
+              node scrape-one.js "$id" || true
+            done
             exit 0
           fi
 
