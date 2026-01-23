@@ -2,15 +2,19 @@
 const { scrapeDispensary, scrapeDispensaryWithDiscovery, getSupportedPlatforms } = require('./lib/scrapers');
 const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
 
-// Parse CLI argument for scrape mode
+// Parse CLI arguments
 const mode = process.argv[2] || 'full';
 if (!['fast', 'zeros', 'full'].includes(mode)) {
-  console.error('Usage: node scrape.js [fast|zeros|full]');
-  console.error('  fast  - Only dispensaries WITH Ace products (hourly)');
-  console.error('  zeros - Only dispensaries WITHOUT Ace products (every 4h)');
-  console.error('  full  - All enabled dispensaries (manual/troubleshooting)');
+  console.error('Usage: node scrape.js [fast|zeros|full] [--rediscover]');
+  console.error('  fast        - Only dispensaries WITH Ace products (hourly)');
+  console.error('  zeros       - Only dispensaries WITHOUT Ace products (every 4h)');
+  console.error('  full        - All enabled dispensaries (manual/troubleshooting)');
+  console.error('  --rediscover - Force format rediscovery, ignore saved configs');
   process.exit(1);
 }
+
+// Check for --rediscover flag
+const rediscover = process.argv.includes('--rediscover');
 
 // Max concurrent scrapers (different domains can run in parallel)
 const MAX_CONCURRENT = 5;
@@ -49,7 +53,7 @@ async function scrapeOne(dispensary, results, retryQueue) {
   console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
 
   try {
-    const scraperOptions = { brandFilter: 'ace' };
+    const scraperOptions = { brandFilter: 'ace', rediscover };
     const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     // Always upsert (deletes old products first, then inserts new ones)
@@ -116,6 +120,9 @@ async function processDomainQueue(domain, dispensaries, results, retryQueue) {
 
 async function main() {
   console.log(`🚀 Starting ${mode.toUpperCase()} scrape...`);
+  if (rediscover) {
+    console.log(`🔄 REDISCOVER mode enabled - ignoring saved configs`);
+  }
   console.log(`📦 Supported platforms: ${getSupportedPlatforms().join(', ')}`);
   console.log(`⚡ Max concurrent domains: ${MAX_CONCURRENT}`);
   const startTime = Date.now();

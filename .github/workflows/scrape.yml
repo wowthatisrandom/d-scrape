@@ -20,6 +20,11 @@ on:
           - fast
           - zeros
           - full
+      rediscover:
+        description: 'Force format rediscovery (ignore saved configs)'
+        required: false
+        default: false
+        type: boolean
       dispensary_id:
         description: 'Dispensary ID to scrape (leave empty for all in mode)'
         required: false
@@ -56,6 +61,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DISPENSARY_ID: ${{ inputs.dispensary_id }}
+          REDISCOVER: ${{ inputs.rediscover }}
         run: |
           # Single dispensary mode (manual only)
           if [ -n "$DISPENSARY_ID" ]; then
@@ -76,5 +82,13 @@ jobs:
             MODE="fast"
           fi
 
-          echo "Running $MODE scrape"
-          npm run scrape:$MODE
+          # Build command with optional rediscover flag
+          CMD="npm run scrape:$MODE"
+          if [ "$REDISCOVER" = "true" ]; then
+            CMD="$CMD -- --rediscover"
+            echo "Running $MODE scrape with REDISCOVER enabled"
+          else
+            echo "Running $MODE scrape"
+          fi
+
+          $CMD
