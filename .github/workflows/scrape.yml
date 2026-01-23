@@ -1,4 +1,5 @@
 name: Scrape Dispensary Menus
+# Workflow schedules: hourly fast (:00), every 4h zeros (:30)
 
 on:
   schedule:
