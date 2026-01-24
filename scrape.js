@@ -65,9 +65,12 @@ async function scrapeOne(dispensary, results, retryQueue) {
     await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
     results.success++;
 
-    if (products && products.length > 0) {
-      results.products += products.length;
-      console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
+    const productCount = products?.length || 0;
+    results.dispensaryResults.push({ name: dispensary.name, products: productCount, status: 'success' });
+
+    if (productCount > 0) {
+      results.products += productCount;
+      console.log(`✅ ${dispensary.name}: Found ${productCount} products`);
     } else {
       console.log(`✅ ${dispensary.name}: No Ace products found`);
       // Queue for retry if saved config returned 0 products
@@ -79,6 +82,7 @@ async function scrapeOne(dispensary, results, retryQueue) {
     console.error(`❌ ${dispensary.name}: ${error.message}`);
     await updateDispensaryStatus(dispensary.id, 'failed', error.message);
     results.failed++;
+    results.dispensaryResults.push({ name: dispensary.name, products: 0, status: 'failed', error: error.message });
     results.errors.push({
       dispensary: dispensary.name,
       error: error.message
@@ -157,7 +161,8 @@ async function main() {
       failed: 0,
       products: 0,
       errors: [],
-      retryFound: 0
+      retryFound: 0,
+      dispensaryResults: []  // Track per-dispensary results for summary
     };
 
     // Queue for dispensaries that need retry (saved config returned 0 products)
@@ -221,6 +226,31 @@ async function main() {
       console.log(`\n❌ Errors:`);
       results.errors.forEach(e => console.log(`   - ${e.dispensary}: ${e.error}`));
     }
+
+    // Print detailed summary table
+    console.log(`\n${'='.repeat(50)}`);
+    console.log(`📊 DETAILED RESULTS`);
+    console.log(`${'='.repeat(50)}`);
+
+    // Sort by name for consistent output
+    const sorted = results.dispensaryResults.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Find max name length for alignment
+    const maxLen = Math.max(...sorted.map(d => d.name.length));
+
+    for (const d of sorted) {
+      const padding = ' '.repeat(maxLen - d.name.length);
+      if (d.status === 'failed') {
+        console.log(`❌ ${d.name}${padding} | FAILED`);
+      } else if (d.products === 0) {
+        console.log(`⚪ ${d.name}${padding} | 0`);
+      } else {
+        console.log(`✅ ${d.name}${padding} | ${d.products}`);
+      }
+    }
+
+    console.log(`${'='.repeat(50)}`);
+    console.log(`Total: ${results.products} products across ${results.success} dispensaries`);
 
     process.exit(results.failed > 0 ? 1 : 0);
 
