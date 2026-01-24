@@ -57,14 +57,23 @@ async function scrapeOne(dispensary, results, retryQueue) {
     const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     // Always upsert (deletes old products first, then inserts new ones)
-    await upsertProductAvailability(dispensary.id, products || []);
-    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+    const upsertResult = await upsertProductAvailability(dispensary.id, products || []);
+
+    // Only update last_product_count if NOT a likely scrape failure
+    // This prevents dispensaries from being excluded from fast scrape due to transient failures
+    if (upsertResult.likelyScrapeFailure) {
+      // Keep existing last_product_count by not passing a new value
+      await updateDispensaryStatus(dispensary.id, 'success', null);
+      console.log(`⚠️ ${dispensary.name}: Likely scrape failure - preserving last_product_count`);
+    } else {
+      await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+    }
     results.success++;
 
     if (products && products.length > 0) {
       results.products += products.length;
       console.log(`✅ ${dispensary.name}: Found ${products.length} products`);
-    } else {
+    } else if (!upsertResult.likelyScrapeFailure) {
       console.log(`✅ ${dispensary.name}: No Ace products found`);
       // Queue for retry if saved config returned 0 products
       if (needsRetry && retryQueue) {
