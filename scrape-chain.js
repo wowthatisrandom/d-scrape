@@ -53,10 +53,17 @@ async function scrapeChain(chainPattern) {
   data.forEach(d => console.log(`   - ${d.name} [${d.menu_platform}]`));
   console.log('');
 
-  const results = { success: 0, failed: 0, products: 0 };
+  const results = {
+    success: 0,
+    failed: 0,
+    products: 0,
+    dispensaries: [],  // Track per-dispensary results
+    errors: []
+  };
 
   // Track discovered format per platform to reuse for rest of chain
   let discoveredFormat = null;
+  const startTime = Date.now();
 
   for (const dispensary of data) {
     console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
@@ -89,10 +96,18 @@ async function scrapeChain(chainPattern) {
       await upsertProductAvailability(dispensary.id, products || []);
       await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
 
-      if (products && products.length > 0) {
-        console.log(`   ✅ Found ${products.length} products`);
+      const productCount = products?.length || 0;
+      results.dispensaries.push({
+        name: dispensary.name,
+        platform: dispensary.menu_platform,
+        products: productCount,
+        status: 'success'
+      });
+
+      if (productCount > 0) {
+        console.log(`   ✅ Found ${productCount} products`);
         products.forEach(p => console.log(`      - ${p.name}`));
-        results.products += products.length;
+        results.products += productCount;
       } else {
         console.log(`   ⚪ No Ace products found`);
       }
@@ -100,12 +115,47 @@ async function scrapeChain(chainPattern) {
     } catch (err) {
       console.error(`   ❌ Failed: ${err.message}`);
       await updateDispensaryStatus(dispensary.id, 'failed', err.message);
+      results.dispensaries.push({
+        name: dispensary.name,
+        platform: dispensary.menu_platform,
+        products: 0,
+        status: 'failed',
+        error: err.message
+      });
+      results.errors.push({ name: dispensary.name, error: err.message });
       results.failed++;
     }
   }
 
-  console.log(`\n${'='.repeat(50)}`);
-  console.log(`✅ Done: ${results.success} succeeded, ${results.failed} failed, ${results.products} total products`);
+  // Print summary
+  const duration = Math.round((Date.now() - startTime) / 1000);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`📊 SCRAPE SUMMARY`);
+  console.log(`${'='.repeat(60)}`);
+  console.log(`⏱️  Duration: ${duration}s`);
+  console.log(`📍 Dispensaries: ${results.success} succeeded, ${results.failed} failed`);
+  console.log(`📦 Total Products: ${results.products}`);
+  console.log('');
+
+  // Per-dispensary breakdown
+  console.log(`📋 Results by Location:`);
+  results.dispensaries.forEach(d => {
+    if (d.status === 'success') {
+      const icon = d.products > 0 ? '✅' : '⚪';
+      console.log(`   ${icon} ${d.name}: ${d.products} products`);
+    } else {
+      console.log(`   ❌ ${d.name}: FAILED - ${d.error}`);
+    }
+  });
+
+  // Errors section if any
+  if (results.errors.length > 0) {
+    console.log('');
+    console.log(`❌ Errors (${results.errors.length}):`);
+    results.errors.forEach(e => console.log(`   - ${e.name}: ${e.error}`));
+  }
+
+  console.log(`${'='.repeat(60)}\n`);
 }
 
 async function main() {
