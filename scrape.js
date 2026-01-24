@@ -106,6 +106,14 @@ async function retryWithDiscovery(dispensary, results) {
       await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
       results.products += products.length;
       results.retryFound += products.length;
+
+      // Update the dispensary result for the summary table
+      const existing = results.dispensaryResults.find(d => d.name === dispensary.name);
+      if (existing) {
+        existing.products = products.length;
+        existing.status = 'success';
+      }
+
       console.log(`✅ ${dispensary.name}: Found ${products.length} products on retry!`);
     } else {
       console.log(`✅ ${dispensary.name}: Confirmed no Ace products`);
