@@ -17,7 +17,8 @@ if (!['fast', 'zeros', 'full'].includes(mode)) {
 const rediscover = process.argv.includes('--rediscover');
 
 // Max concurrent scrapers (different domains can run in parallel)
-const MAX_CONCURRENT = 5;
+// Reduced from 5 to 4 to prevent resource contention during parallel iframe scraping
+const MAX_CONCURRENT = 4;
 
 /**
  * Extract base domain from URL
