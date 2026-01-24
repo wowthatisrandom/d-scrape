@@ -4,6 +4,12 @@
 const puppeteer = require('puppeteer');
 const { getSupabaseClient, updateScrapeConfig } = require('./lib/supabase');
 
+// Dispensaries that share a single Dutchie iframe across all locations
+// These should NOT have store_slug saved - they need iframe mode to get location-specific data
+const SHARED_IFRAME_PATTERNS = [
+  'kind goods'  // All Kind Goods locations share one Dutchie embed
+];
+
 async function discoverStoreSlug(dispensary) {
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -65,10 +71,27 @@ async function main() {
 
   if (error) throw error;
 
-  // Filter to those without store_slug
-  const needsSlug = dispensaries.filter(d => !d.scrape_config?.store_slug);
+  // Filter to those without store_slug, excluding shared-iframe dispensaries
+  const excluded = [];
+  const needsSlug = dispensaries.filter(d => {
+    if (d.scrape_config?.store_slug) return false;
 
-  console.log(`\n🔍 Found ${needsSlug.length} dutchie dispensaries needing store_slug\n`);
+    // Skip dispensaries that share iframes across locations
+    const nameLower = d.name.toLowerCase();
+    for (const pattern of SHARED_IFRAME_PATTERNS) {
+      if (nameLower.includes(pattern)) {
+        excluded.push(d.name);
+        return false;
+      }
+    }
+    return true;
+  });
+
+  console.log(`\n🔍 Found ${needsSlug.length} dutchie dispensaries needing store_slug`);
+  if (excluded.length > 0) {
+    console.log(`⏭️ Skipping ${excluded.length} shared-iframe dispensaries: ${excluded.join(', ')}`);
+  }
+  console.log('');
 
   let success = 0, failed = 0;
 
