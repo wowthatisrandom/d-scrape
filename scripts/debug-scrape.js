@@ -44,17 +44,20 @@ function getProductKey(productName, size) {
 function inferDefaultSize(normalizedName, existingSize) {
   const nameLower = normalizedName.toLowerCase();
 
+  // Hot sauce always has a fixed size
+  if (nameLower.includes('hot sauce') || nameLower.includes('sudden death')) {
+    return '8oz - 240mg';
+  }
+
   if (existingSize) {
+    // Jackpot syrups always show as 1oz - 150mg
     if (nameLower.startsWith('jackpot infused syrup')) {
-      const mgMatch = existingSize.match(/(\d+)\s*mg/i);
-      if (mgMatch) return mgMatch[1] + 'mg';
-      const gMatch = existingSize.match(/([\d.]+)\s*g/i);
-      if (gMatch) return Math.round(parseFloat(gMatch[1]) * 1000) + 'mg';
+      return '1oz - 150mg';
     }
     return existingSize;
   }
 
-  if (nameLower.startsWith('jackpot infused syrup')) return '150mg';
+  if (nameLower.startsWith('jackpot infused syrup')) return '1oz - 150mg';
   if (nameLower.startsWith('sesh stick vape')) return '.5g';
   if (nameLower.startsWith('hash cones')) return '2.5g';
   if (nameLower.startsWith('cold cured live rosin')) return '2g';
