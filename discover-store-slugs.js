@@ -1,7 +1,7 @@
-// Quick script to discover and save store_slugs for all dutchie dispensaries
-// Doesn't scrape products - just finds the iframe src and extracts the slug
+// Discover and save store_slugs for all dutchie dispensaries
+// Uses the real DutchieScraper with proper age gate handling and stealth
 
-const puppeteer = require('puppeteer');
+const DutchieScraper = require('./lib/scrapers/dutchie');
 const { getSupabaseClient, updateScrapeConfig } = require('./lib/supabase');
 
 // Dispensaries that share a single Dutchie iframe across all locations
@@ -10,59 +10,11 @@ const SHARED_IFRAME_PATTERNS = [
   'kind goods'  // All Kind Goods locations share one Dutchie embed
 ];
 
-async function discoverStoreSlug(dispensary) {
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-
-    // Navigate to the dispensary page
-    await page.goto(dispensary.menu_url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Try to click age gate if present
-    try {
-      const ageButton = await page.$('button[class*="age"], button:has-text("Enter"), button:has-text("Yes"), button:has-text("21")');
-      if (ageButton) await ageButton.click();
-      await new Promise(r => setTimeout(r, 1000));
-    } catch (e) {}
-
-    // Find Dutchie iframe
-    const iframeSelectors = [
-      'iframe[src*="dutchie.com"]',
-      'iframe[src*="embedded-menu"]'
-    ];
-
-    for (const selector of iframeSelectors) {
-      const iframe = await page.$(selector);
-      if (iframe) {
-        const src = await iframe.evaluate(el => el.src);
-        if (src && src.includes('embedded-menu')) {
-          const match = src.match(/embedded-menu\/([^/]+)/);
-          if (match) {
-            await browser.close();
-            return match[1];
-          }
-        }
-      }
-    }
-
-    await browser.close();
-    return null;
-  } catch (e) {
-    await browser.close();
-    throw e;
-  }
-}
-
 async function main() {
   const supabase = getSupabaseClient();
 
-  // Get all dutchie dispensaries that don't have store_slug
+  // Get enabled dutchie dispensaries that don't have store_slug
+  // Note: dutchie-plus uses GraphQL API with retailerId, not store_slug
   const { data: dispensaries, error } = await supabase
     .from('dispensaries')
     .select('*')
@@ -98,11 +50,35 @@ async function main() {
   for (const dispensary of needsSlug) {
     process.stdout.write(`${dispensary.name}... `);
 
+    const scraper = new DutchieScraper({ brandFilter: 'ace' });
+    const browser = await scraper.launchBrowser();
+
     try {
-      const storeSlug = await discoverStoreSlug(dispensary);
+      const page = await scraper.createPage(browser);
+
+      // Try filtered_menu_url first (more likely to have iframe params), then menu_url
+      const sources = [
+        { url: dispensary.filtered_menu_url, label: 'filtered_menu_url' },
+        { url: dispensary.menu_url, label: 'menu_url' }
+      ];
+
+      let storeSlug = null;
+
+      for (const source of sources) {
+        if (!source.url) continue;
+
+        try {
+          const result = await scraper.discoverStoreSlug(page, source.url, source.label, null);
+          if (result.storeSlug) {
+            storeSlug = result.storeSlug;
+            break;
+          }
+        } catch (e) {
+          // Continue to next source on error
+        }
+      }
 
       if (storeSlug) {
-        // Save it
         const newConfig = {
           ...dispensary.scrape_config,
           store_slug: storeSlug
@@ -117,6 +93,8 @@ async function main() {
     } catch (e) {
       console.log(`❌ ${e.message}`);
       failed++;
+    } finally {
+      await browser.close();
     }
   }
 
