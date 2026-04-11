@@ -12,6 +12,12 @@ const SHARED_IFRAME_PATTERNS = [
 
 async function main() {
   const supabase = getSupabaseClient();
+  const args = process.argv.slice(2);
+  const includeAll = args.includes('--all');
+  const idsArg = args.find(arg => arg.startsWith('--ids='));
+  const targetIds = idsArg
+    ? idsArg.replace('--ids=', '').split(',').map(id => id.trim()).filter(Boolean)
+    : [];
 
   // Get enabled dutchie dispensaries that don't have store_slug
   // Note: dutchie-plus uses GraphQL API with retailerId, not store_slug
@@ -26,7 +32,11 @@ async function main() {
   // Filter to those without store_slug, excluding shared-iframe dispensaries
   const excluded = [];
   const needsSlug = dispensaries.filter(d => {
-    if (d.scrape_config?.store_slug) return false;
+    if (targetIds.length > 0) {
+      return targetIds.includes(d.id);
+    }
+
+    if (!includeAll && d.scrape_config?.store_slug) return false;
 
     // Skip dispensaries that share iframes across locations
     const nameLower = d.name.toLowerCase();
@@ -39,7 +49,13 @@ async function main() {
     return true;
   });
 
-  console.log(`\n🔍 Found ${needsSlug.length} dutchie dispensaries needing store_slug`);
+  const modeLabel = targetIds.length > 0
+    ? `matching requested IDs (${targetIds.length})`
+    : includeAll
+      ? 'for rediscovery'
+      : 'needing store_slug';
+
+  console.log(`\n🔍 Found ${needsSlug.length} dutchie dispensaries ${modeLabel}`);
   if (excluded.length > 0) {
     console.log(`⏭️ Skipping ${excluded.length} shared-iframe dispensaries: ${excluded.join(', ')}`);
   }

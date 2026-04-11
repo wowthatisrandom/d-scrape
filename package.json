@@ -8,6 +8,7 @@
     "scrape:fast": "node scrape.js fast",
     "scrape:zeros": "node scrape.js zeros",
     "scrape:full": "node scrape.js full",
+    "discover:store-slugs": "node discover-store-slugs.js",
     "start": "node server.js"
   },
   "dependencies": {
