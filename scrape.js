@@ -60,9 +60,10 @@ async function scrapeOne(dispensary, results, retryQueue) {
     // Upsert products (handles product-level out-of-stock with consecutive misses)
     const upsertResult = await upsertProductAvailability(dispensary.id, products || []);
 
-    // Update status - consecutive zero protection is built into updateDispensaryStatus
-    // It requires 2+ consecutive zero scrapes before setting last_product_count to 0
-    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+    // If the scraper likely failed, record success/error state without advancing the
+    // dispensary-level zero-product streak. Product-level state is already preserved.
+    const statusProductCount = upsertResult.likelyScrapeFailure ? undefined : (products?.length || 0);
+    await updateDispensaryStatus(dispensary.id, 'success', null, statusProductCount);
     results.success++;
 
     const productCount = products?.length || 0;
