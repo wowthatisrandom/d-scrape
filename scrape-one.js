@@ -1,6 +1,7 @@
 // Scrape a single dispensary by ID
 const { scrapeDispensary } = require('./lib/scrapers');
-const { getDispensaryById, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
+const { getSupabaseClient, getDispensaryById, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
+const { loadVocabulary } = require('./lib/vocabulary');
 
 async function main() {
   const dispensaryId = process.argv[2];
@@ -14,6 +15,9 @@ async function main() {
   console.log(`🔍 Fetching dispensary: ${dispensaryId}`);
 
   try {
+    const supabase = getSupabaseClient();
+    const vocab = await loadVocabulary(supabase);
+
     const dispensary = await getDispensaryById(dispensaryId);
 
     if (!dispensary) {
@@ -44,7 +48,7 @@ async function main() {
     }
 
     // Always save to database (upsert deletes old products first)
-    const upsertResult = await upsertProductAvailability(dispensary.id, products || []);
+    const upsertResult = await upsertProductAvailability(dispensary.id, products || [], vocab);
     const statusProductCount = upsertResult.likelyScrapeFailure ? undefined : (products?.length || 0);
     await updateDispensaryStatus(dispensary.id, 'success', null, statusProductCount);
     console.log(`\n💾 Saved to database`);

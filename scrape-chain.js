@@ -1,6 +1,7 @@
 // Scrape all dispensaries matching a chain name pattern
 const { scrapeDispensary } = require('./lib/scrapers');
 const { getSupabaseClient, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
+const { loadVocabulary } = require('./lib/vocabulary');
 
 async function listChains() {
   const supabase = getSupabaseClient();
@@ -35,6 +36,8 @@ async function listChains() {
 
 async function scrapeChain(chainPattern) {
   const supabase = getSupabaseClient();
+  const vocab = await loadVocabulary(supabase);
+
   const { data, error } = await supabase
     .from('dispensaries')
     .select('*')
@@ -93,7 +96,7 @@ async function scrapeChain(chainPattern) {
         console.log(`   🔗 Chain format discovered: ${usedFormat} (brand: ${brandSlug || 'auto'})`);
       }
 
-      await upsertProductAvailability(dispensary.id, products || []);
+      await upsertProductAvailability(dispensary.id, products || [], vocab);
       await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
 
       const productCount = products?.length || 0;

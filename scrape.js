@@ -1,6 +1,7 @@
 // Standalone scrape script for GitHub Actions
 const { scrapeDispensary, scrapeDispensaryWithDiscovery, getSupportedPlatforms } = require('./lib/scrapers');
-const { getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
+const { getSupabaseClient, getEnabledDispensaries, updateDispensaryStatus, upsertProductAvailability } = require('./lib/supabase');
+const { loadVocabulary } = require('./lib/vocabulary');
 
 // Parse CLI arguments
 const mode = process.argv[2] || 'full';
@@ -50,7 +51,7 @@ function groupByDomain(dispensaries) {
 /**
  * Scrape a single dispensary and handle results
  */
-async function scrapeOne(dispensary, results, retryQueue) {
+async function scrapeOne(dispensary, results, retryQueue, vocab) {
   console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
 
   try {
@@ -58,7 +59,7 @@ async function scrapeOne(dispensary, results, retryQueue) {
     const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     // Upsert products (handles product-level out-of-stock with consecutive misses)
-    const upsertResult = await upsertProductAvailability(dispensary.id, products || []);
+    const upsertResult = await upsertProductAvailability(dispensary.id, products || [], vocab);
 
     // If the scraper likely failed, record success/error state without advancing the
     // dispensary-level zero-product streak. Product-level state is already preserved.
@@ -94,7 +95,7 @@ async function scrapeOne(dispensary, results, retryQueue) {
 /**
  * Retry a dispensary with full format discovery
  */
-async function retryWithDiscovery(dispensary, results) {
+async function retryWithDiscovery(dispensary, results, vocab) {
   console.log(`\n🔄 Retrying: ${dispensary.name} (${dispensary.menu_platform})`);
 
   try {
@@ -103,7 +104,7 @@ async function retryWithDiscovery(dispensary, results) {
 
     // Update if we found products
     if (products && products.length > 0) {
-      await upsertProductAvailability(dispensary.id, products);
+      await upsertProductAvailability(dispensary.id, products, vocab);
       await updateDispensaryStatus(dispensary.id, 'success', null, products.length);
       results.products += products.length;
       results.retryFound += products.length;
@@ -127,10 +128,10 @@ async function retryWithDiscovery(dispensary, results) {
 /**
  * Process a domain queue sequentially (one dispensary at a time per domain)
  */
-async function processDomainQueue(domain, dispensaries, results, retryQueue) {
+async function processDomainQueue(domain, dispensaries, results, retryQueue, vocab) {
   console.log(`\n📍 Starting domain: ${domain} (${dispensaries.length} dispensaries)`);
   for (const dispensary of dispensaries) {
-    await scrapeOne(dispensary, results, retryQueue);
+    await scrapeOne(dispensary, results, retryQueue, vocab);
   }
   console.log(`✅ Finished domain: ${domain}`);
 }
@@ -145,6 +146,11 @@ async function main() {
   const startTime = Date.now();
 
   try {
+    // Load brand vocabulary once at startup — shared with all upsert calls
+    const supabase = getSupabaseClient();
+    const vocab = await loadVocabulary(supabase);
+    console.log(`📖 Loaded brand vocabulary: ${vocab.strains.length} strains, ${vocab.flavors.length} flavors`);
+
     const dispensaries = await getEnabledDispensaries(null, mode);
 
     if (!dispensaries || dispensaries.length === 0) {
@@ -193,7 +199,7 @@ async function main() {
       // Start new domain queues up to MAX_CONCURRENT
       while (activePromises.length < MAX_CONCURRENT && queueIndex < domainQueues.length) {
         const { domain, dispensaries: domainDispensaries } = domainQueues[queueIndex];
-        const promise = processDomainQueue(domain, domainDispensaries, results, retryQueue)
+        const promise = processDomainQueue(domain, domainDispensaries, results, retryQueue, vocab)
           .then(() => {
             // Remove from active promises when done
             const idx = activePromises.indexOf(promise);
@@ -216,7 +222,7 @@ async function main() {
       console.log(`🔄 Retry pass: ${retryQueue.length} dispensaries to check with format discovery`);
 
       for (const dispensary of retryQueue) {
-        await retryWithDiscovery(dispensary, results);
+        await retryWithDiscovery(dispensary, results, vocab);
       }
     }
 

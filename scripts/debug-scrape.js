@@ -17,6 +17,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.loc
 
 const { getSupabaseClient, getDispensaryById, getEnabledDispensaries } = require('../lib/supabase');
 const { normalizeProductName } = require('../lib/normalizer');
+const { loadVocabulary } = require('../lib/vocabulary');
 const DutchieScraper = require('../lib/scrapers/dutchie');
 
 // Parse command line arguments
@@ -76,6 +77,7 @@ async function main() {
   }
 
   const supabase = getSupabaseClient();
+  const vocab = await loadVocabulary(supabase);
   let dispensary;
 
   // Find dispensary
@@ -170,7 +172,7 @@ async function main() {
     scrapedProducts.forEach((product, index) => {
       const rawName = product.name;
       const rawSize = product.size;
-      const normalizedName = normalizeProductName(rawName, rawSize);
+      const normalizedName = normalizeProductName(rawName, rawSize, vocab);
       const finalSize = inferDefaultSize(normalizedName, rawSize);
       const key = getProductKey(normalizedName, finalSize);
 
@@ -245,7 +247,7 @@ async function main() {
 
     const scrapedKeys = new Set();
     scrapedProducts.forEach(p => {
-      const normalizedName = normalizeProductName(p.name, p.size);
+      const normalizedName = normalizeProductName(p.name, p.size, vocab);
       const finalSize = inferDefaultSize(normalizedName, p.size);
       scrapedKeys.add(getProductKey(normalizedName, finalSize));
     });
