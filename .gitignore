@@ -10,3 +10,6 @@ test-*.js
 check-*.js
 get-*.js
 find-*.js
+
+# Local DB backup dumps (contain scraped data, not source)
+*-backup.json
