@@ -48,9 +48,8 @@ async function main() {
     }
 
     // Always save to database (upsert deletes old products first)
-    const upsertResult = await upsertProductAvailability(dispensary.id, products || [], vocab);
-    const statusProductCount = upsertResult.likelyScrapeFailure ? undefined : (products?.length || 0);
-    await updateDispensaryStatus(dispensary.id, 'success', null, statusProductCount);
+    await upsertProductAvailability(dispensary.id, products || [], vocab);
+    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
     console.log(`\n💾 Saved to database`);
 
     process.exit(0);

@@ -21,6 +21,35 @@ const rediscover = process.argv.includes('--rediscover');
 // Reduced from 5 to 4 to prevent resource contention during parallel iframe scraping
 const MAX_CONCURRENT = 4;
 
+// Breather between dispensaries on the same domain. Sites like thekindgoods.com
+// start refusing connections once a queue of 4 stores hammers them back to back,
+// and the tail of the queue is what times out.
+const SAME_DOMAIN_DELAY_MS = 5000;
+
+// Errors that mean "the site didn't answer this time", not "this dispensary is
+// misconfigured". These get a second pass at the end of the run and don't turn
+// the whole workflow red on their own.
+const TRANSIENT_ERROR_PATTERNS = [
+  'Navigation timeout',
+  'net::ERR_',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'socket hang up',
+  'Target closed',
+  'Session closed',
+  'Protocol error'
+];
+
+function isTransientError(message = '') {
+  return TRANSIENT_ERROR_PATTERNS.some(pattern => message.includes(pattern));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Extract base domain from URL
  */
@@ -51,7 +80,7 @@ function groupByDomain(dispensaries) {
 /**
  * Scrape a single dispensary and handle results
  */
-async function scrapeOne(dispensary, results, retryQueue, vocab) {
+async function scrapeOne(dispensary, results, retryQueue, vocab, failureQueue = null) {
   console.log(`\n🏪 Scraping: ${dispensary.name} (${dispensary.menu_platform})`);
 
   try {
@@ -59,12 +88,13 @@ async function scrapeOne(dispensary, results, retryQueue, vocab) {
     const { products, needsRetry } = await scrapeDispensary(dispensary, scraperOptions);
 
     // Upsert products (handles product-level out-of-stock with consecutive misses)
-    const upsertResult = await upsertProductAvailability(dispensary.id, products || [], vocab);
+    await upsertProductAvailability(dispensary.id, products || [], vocab);
 
-    // If the scraper likely failed, record success/error state without advancing the
-    // dispensary-level zero-product streak. Product-level state is already preserved.
-    const statusProductCount = upsertResult.likelyScrapeFailure ? undefined : (products?.length || 0);
-    await updateDispensaryStatus(dispensary.id, 'success', null, statusProductCount);
+    // Always report the real count. updateDispensaryStatus has its own 2-strike
+    // guard before it zeroes last_product_count, so a one-off bad scrape still
+    // can't demote the dispensary — and unlike suppressing the count entirely,
+    // this lets a genuinely sold-out store eventually settle at zero.
+    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
     results.success++;
 
     const productCount = products?.length || 0;
@@ -81,14 +111,23 @@ async function scrapeOne(dispensary, results, retryQueue, vocab) {
       }
     }
   } catch (error) {
+    const transient = isTransientError(error.message || '');
     console.error(`❌ ${dispensary.name}: ${error.message}`);
     await updateDispensaryStatus(dispensary.id, 'failed', error.message);
     results.failed++;
-    results.dispensaryResults.push({ name: dispensary.name, products: 0, status: 'failed', error: error.message });
+    results.dispensaryResults.push({ name: dispensary.name, products: 0, status: 'failed', error: error.message, transient });
     results.errors.push({
       dispensary: dispensary.name,
-      error: error.message
+      error: error.message,
+      transient
     });
+
+    // Transient failures get one more shot after every domain queue has drained,
+    // by which point the site has had time to recover.
+    if (transient && failureQueue) {
+      console.log(`  🕒 Transient error - queued for a second pass at end of run`);
+      failureQueue.push(dispensary);
+    }
   }
 }
 
@@ -126,12 +165,65 @@ async function retryWithDiscovery(dispensary, results, vocab) {
 }
 
 /**
+ * Second pass for a dispensary that failed with a transient network error.
+ * Runs after every domain queue has drained, so the site has had time to recover.
+ * On success it rewrites the earlier failure in the results so the summary and
+ * exit code reflect the final state.
+ */
+async function retryFailedDispensary(dispensary, results, vocab) {
+  console.log(`\n🔁 Second pass: ${dispensary.name} (${dispensary.menu_platform})`);
+
+  try {
+    const scraperOptions = { brandFilter: 'ace', rediscover };
+    const { products } = await scrapeDispensary(dispensary, scraperOptions);
+    await upsertProductAvailability(dispensary.id, products || [], vocab);
+    await updateDispensaryStatus(dispensary.id, 'success', null, products?.length || 0);
+
+    const productCount = products?.length || 0;
+    results.failed--;
+    results.success++;
+    results.products += productCount;
+    results.errors = results.errors.filter(e => e.dispensary !== dispensary.name);
+
+    const existing = results.dispensaryResults.find(d => d.name === dispensary.name);
+    if (existing) {
+      existing.status = 'success';
+      existing.products = productCount;
+      delete existing.error;
+      delete existing.transient;
+    }
+
+    console.log(`✅ ${dispensary.name}: recovered on second pass (${productCount} products)`);
+    return true;
+  } catch (error) {
+    console.error(`❌ ${dispensary.name}: second pass also failed: ${error.message}`);
+    await updateDispensaryStatus(dispensary.id, 'failed', error.message);
+
+    // Keep the summary pointing at the most recent error.
+    const entry = results.errors.find(e => e.dispensary === dispensary.name);
+    if (entry) {
+      entry.error = error.message;
+      entry.transient = isTransientError(error.message || '');
+    }
+    const existing = results.dispensaryResults.find(d => d.name === dispensary.name);
+    if (existing) {
+      existing.error = error.message;
+      existing.transient = isTransientError(error.message || '');
+    }
+    return false;
+  }
+}
+
+/**
  * Process a domain queue sequentially (one dispensary at a time per domain)
  */
-async function processDomainQueue(domain, dispensaries, results, retryQueue, vocab) {
+async function processDomainQueue(domain, dispensaries, results, retryQueue, vocab, failureQueue) {
   console.log(`\n📍 Starting domain: ${domain} (${dispensaries.length} dispensaries)`);
-  for (const dispensary of dispensaries) {
-    await scrapeOne(dispensary, results, retryQueue, vocab);
+  for (const [index, dispensary] of dispensaries.entries()) {
+    if (index > 0) {
+      await sleep(SAME_DOMAIN_DELAY_MS);
+    }
+    await scrapeOne(dispensary, results, retryQueue, vocab, failureQueue);
   }
   console.log(`✅ Finished domain: ${domain}`);
 }
@@ -184,6 +276,10 @@ async function main() {
     // Skip retry queue in zeros mode - these are already the dispensaries without products
     const retryQueue = mode === 'zeros' ? null : [];
 
+    // Dispensaries that failed with a transient network error - retried once at
+    // the end of the run, in every mode.
+    const failureQueue = [];
+
     // Process domains in parallel, but dispensaries within same domain sequentially
     // This avoids hitting the same site simultaneously while maximizing throughput
     const domainQueues = domains.map(domain => ({
@@ -199,7 +295,7 @@ async function main() {
       // Start new domain queues up to MAX_CONCURRENT
       while (activePromises.length < MAX_CONCURRENT && queueIndex < domainQueues.length) {
         const { domain, dispensaries: domainDispensaries } = domainQueues[queueIndex];
-        const promise = processDomainQueue(domain, domainDispensaries, results, retryQueue, vocab)
+        const promise = processDomainQueue(domain, domainDispensaries, results, retryQueue, vocab, failureQueue)
           .then(() => {
             // Remove from active promises when done
             const idx = activePromises.indexOf(promise);
@@ -212,6 +308,17 @@ async function main() {
       // Wait for at least one to complete before continuing
       if (activePromises.length > 0) {
         await Promise.race(activePromises);
+      }
+    }
+
+    // Second pass for transient network failures, once every domain has cooled off
+    if (failureQueue.length > 0) {
+      console.log(`\n${'='.repeat(50)}`);
+      console.log(`🔁 Second pass: ${failureQueue.length} dispensaries that hit transient network errors`);
+      await sleep(SAME_DOMAIN_DELAY_MS);
+
+      for (const dispensary of failureQueue) {
+        await retryFailedDispensary(dispensary, results, vocab);
       }
     }
 
@@ -237,9 +344,12 @@ async function main() {
       console.log(`   Found on retry: ${results.retryFound}`);
     }
 
+    const hardErrors = results.errors.filter(e => !e.transient);
+    const transientErrors = results.errors.filter(e => e.transient);
+
     if (results.errors.length > 0) {
       console.log(`\n❌ Errors:`);
-      results.errors.forEach(e => console.log(`   - ${e.dispensary}: ${e.error}`));
+      results.errors.forEach(e => console.log(`   - ${e.dispensary}: ${e.error}${e.transient ? ' (transient)' : ''}`));
     }
 
     // Print detailed summary table
@@ -267,7 +377,18 @@ async function main() {
     console.log(`${'='.repeat(50)}`);
     console.log(`Total: ${results.products} products across ${results.success} dispensaries`);
 
-    process.exit(results.failed > 0 ? 1 : 0);
+    // Fail the run for real problems (bad config, unhandled bugs) or a total
+    // wipeout. A site that timed out twice while others scraped fine is a flaky
+    // site, not a broken scraper - warn, but exit clean so the schedule stays green.
+    const totalWipeout = results.success === 0 && results.failed > 0;
+    if (hardErrors.length > 0 || totalWipeout) {
+      process.exit(1);
+    }
+
+    if (transientErrors.length > 0) {
+      console.log(`\n⚠️ ${transientErrors.length} dispensary(s) unreachable after a second pass - exiting 0 (transient site errors)`);
+    }
+    process.exit(0);
 
   } catch (error) {
     console.error('💥 Scrape failed:', error);
